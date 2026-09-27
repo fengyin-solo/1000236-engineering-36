@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, BatchActionPayload, BatchActionResult, EntryPayload, PageResult
 from app.services.training import TrainingService
 
 router = APIRouter(prefix="/api/training", tags=["安全培训"])
@@ -14,6 +14,13 @@ service = TrainingService()
 
 LIST_FIELDS = ["培训编号", "培训主题", "培训讲师", "培训日期", "参训人数", "考核通过", "培训资料", "培训状态"]
 STATUSES = ["计划中", "已组织", "已完成", "需补训"]
+BATCH_MAX_IDS = 200
+
+
+@router.get("/summary")
+def training_summary() -> dict[str, int]:
+    """参训人数与完成数量汇总；放在 /{entry_id} 之前，避免被当成记录 id。"""
+    return service.summary()
 
 
 @router.get("", response_model=PageResult[dict])
@@ -46,6 +53,19 @@ def create_entry(payload: EntryPayload) -> ActionResult:
     if missing:
         return ActionResult(ok=False, message=f"缺少必填字段：{'、'.join(missing)}")
     return ActionResult(ok=True, message="培训记录已登记", entry=entry)
+
+
+@router.post("/batch-actions", response_model=BatchActionResult)
+def run_batch_action(payload: BatchActionPayload) -> BatchActionResult:
+    """多选后批量确认完成或退回补考：逐条返回结果，跳过项不影响其他记录。"""
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="请先勾选要批量处理的培训记录")
+    if len(payload.ids) > BATCH_MAX_IDS:
+        raise HTTPException(status_code=400, detail=f"单次最多批量处理 {BATCH_MAX_IDS} 条，请分批操作")
+    result, message = service.run_batch_action(payload.ids, payload.action)
+    if result is None:
+        raise HTTPException(status_code=400, detail=message)
+    return BatchActionResult(ok=True, message=message, **result)
 
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)

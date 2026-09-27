@@ -28,6 +28,33 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class BatchActionPayload(BaseModel):
+    """批量动作请求：勾选的记录 id 列表与要执行的动作。"""
+
+    ids: list[int] = Field(default_factory=list)
+    action: str = ""
+
+
+class BatchItemResult(BaseModel):
+    """批量处理中单条记录的结果，跳过项也要给出可读原因。"""
+
+    id: int
+    ok: bool
+    message: str
+
+
+class BatchActionResult(BaseModel):
+    """批量动作结果：逐条明细 + 成功/跳过计数 + 最新汇总，便于前端同步刷新。"""
+
+    ok: bool
+    message: str
+    action: str = ""
+    results: list[BatchItemResult] = Field(default_factory=list)
+    succeeded: int = 0
+    skipped: int = 0
+    summary: dict[str, int] = Field(default_factory=dict)
+
+
 
 class PlantEntry(BaseModel):
     """光伏电站明细结构。"""
