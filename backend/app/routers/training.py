@@ -5,8 +5,14 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
-from app.services.training import TrainingService
+from app.schemas import (
+    ActionResult,
+    BatchActionPayload,
+    BatchActionResult,
+    EntryPayload,
+    PageResult,
+)
+from app.services.training import BATCH_ACTION_RULES, TrainingService
 
 router = APIRouter(prefix="/api/training", tags=["安全培训"])
 
@@ -30,6 +36,19 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/statistics")
+def get_statistics() -> dict[str, int]:
+    """参训人数、完成数量等汇总口径，批量动作后前端用它同步刷新卡片。"""
+    return service.statistics()
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出安全培训清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "training", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条培训记录明细；不存在时给出可读的错误说明。"""
@@ -48,6 +67,42 @@ def create_entry(payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message="培训记录已登记", entry=entry)
 
 
+@router.post("/batch-actions", response_model=BatchActionResult)
+def run_batch_action(payload: BatchActionPayload) -> BatchActionResult:
+    """批量确认完成 / 退回补考：一次处理多条并逐条返回结果。
+
+    考核未通过、缺少培训日期或重复选择的记录单独说明，其余记录继续处理；
+    重复确认同一条只生效一次，汇总里带刷新后的参训人数与完成数量。
+    """
+    action = (payload.action or "").strip()
+    if action not in BATCH_ACTION_RULES:
+        allowed = "、".join(BATCH_ACTION_RULES)
+        raise HTTPException(status_code=400, detail=f"批量动作「{action}」不支持，仅支持：{allowed}")
+    if not payload.entry_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一条培训记录后再执行批量操作")
+
+    raw_results, statistics = service.run_batch_action(action, payload.entry_ids)
+    success_count = sum(1 for item in raw_results if item["ok"] and item["code"] == "applied")
+    skipped_count = sum(1 for item in raw_results if not item["ok"])
+    kept_count = sum(1 for item in raw_results if item["ok"] and item["code"] == "already_applied")
+    parts = [f"成功处理 {success_count} 条"]
+    if kept_count:
+        parts.append(f"已处于目标状态 {kept_count} 条（未重复生效）")
+    if skipped_count:
+        parts.append(f"跳过 {skipped_count} 条")
+    message = f"批量{action}完成：" + "，".join(parts)
+
+    return BatchActionResult(
+        ok=True,
+        action=action,
+        message=message,
+        results=raw_results,
+        success_count=success_count,
+        skipped_count=skipped_count,
+        statistics=statistics,
+    )
+
+
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     """对单条培训记录执行组织培训、登记考核、安排补训；不允许的动作会被拦下并说明原因。"""
@@ -56,10 +111,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出安全培训清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "training", "total": total, "items": items}

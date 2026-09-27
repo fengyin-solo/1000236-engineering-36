@@ -21,6 +21,35 @@ class ActionResult(BaseModel):
     entry: dict[str, Any] | None = None
 
 
+class BatchActionPayload(BaseModel):
+    """批量动作请求：动作名称与一组记录编号（编号允许重复提交）。"""
+
+    action: str
+    entry_ids: list[int] = Field(default_factory=list)
+
+
+class BatchItemResult(BaseModel):
+    """批量动作的逐条处理结果。"""
+
+    entry_id: int
+    ok: bool
+    code: str | None = None
+    message: str
+    entry: dict[str, Any] | None = None
+
+
+class BatchActionResult(BaseModel):
+    """批量动作汇总：除了逐条结果，还带上刷新后的参训人数与完成数量。"""
+
+    ok: bool
+    action: str
+    message: str
+    results: list[BatchItemResult] = Field(default_factory=list)
+    success_count: int = 0
+    skipped_count: int = 0
+    statistics: dict[str, int] = Field(default_factory=dict)
+
+
 class EntryPayload(BaseModel):
     """登记或修改一条业务记录时提交的字段集合。"""
 
